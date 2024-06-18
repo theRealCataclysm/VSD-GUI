@@ -1,41 +1,32 @@
 #! /usr/bin/python
-import io
 import sys
 import os
 import re
-import time
 import json
 import subprocess
-import xml.etree.ElementTree as ET
-from threading import Timer
 from time import strftime, gmtime
 from PySide2 import QtCore, QtGui
-from PySide2.QtCore import Qt, QSize, QObject, Signal, QProcess, QByteArray, QTimer, QProcessEnvironment
+from PySide2.QtCore import Qt, QSize, QProcess, QByteArray, QTimer, QProcessEnvironment
 from PySide2.QtWidgets import (
     QApplication,
-    QTableWidgetItem,
+    QScrollArea,
+    QFileDialog,
     QLabel,
     QMainWindow,
     QPushButton,
-    QTabWidget,
+    QListWidget,
     QWidget,
-    QToolBar,
     QAction,
     QDialog,
-    QDialogButtonBox,
     QGridLayout,
     QHBoxLayout,
     QVBoxLayout,
     QTabWidget,
-    QTextBrowser,
     QLineEdit,
-    QTextEdit,
     QCheckBox,
     QRadioButton,
     QComboBox,
-    QListView,
     QPlainTextEdit,
-    QTableWidget,
     QTableView,
     QProgressBar
 )
@@ -268,6 +259,14 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle("VSD GUI")
 
+        preferences_action = QAction("&Preferences", self)
+        preferences_action.triggered.connect(lambda: self.loadPreferences())
+
+        menu = self.menuBar()
+
+        edit_menu = menu.addMenu("&Edit")
+        edit_menu.addAction(preferences_action)
+
         self.resize(QSize(1000, 500))
         self.layout = QVBoxLayout()
         tabs = QTabWidget(self)
@@ -290,7 +289,7 @@ class MainWindow(QMainWindow):
 
         self.CaptureRefreshButton = QPushButton("Refresh")
         tab1.layout2.addWidget(self.CaptureRefreshButton)
-        self.CaptureRefreshButton.clicked.connect(lambda: self.p.kill())
+        self.CaptureRefreshButton.clicked.connect(lambda: self.capturerefresh())
         self.CaptureRefreshButton.setFixedSize(100, 30)
 
         self.captureView = QTableView()
@@ -310,7 +309,7 @@ class MainWindow(QMainWindow):
 
         self.DownloadRefreshButton = QPushButton("Refresh")
         tab1.layout3.addWidget(self.DownloadRefreshButton)
-        self.DownloadRefreshButton.clicked.connect(lambda: self.p.kill())
+        self.DownloadRefreshButton.clicked.connect(lambda: self.downloadrefresh())
         self.DownloadRefreshButton.setFixedSize(100, 30)
 
         self.downloadView = QTableView()
@@ -399,10 +398,6 @@ class MainWindow(QMainWindow):
         self.captureQueueView.resizeColumnsToContents()
         self.captureQueueView.setSelectionBehavior(QTableView.SelectRows)
         self.captureQueueView.doubleClicked.connect(lambda: self.selectcapture())
-        #self.captureQueueView = QListView()
-        #tab2.layout6.addWidget(self.captureQueueView)
-        #self.captureQueueView.setModel(self.capturemodel)
-        #self.captureQueueView.setModelColumn(0)
 
         capturebuttonbox1 = QWidget()
         tab2.layout.addWidget(capturebuttonbox1, 0, 1)
@@ -508,12 +503,6 @@ class MainWindow(QMainWindow):
         self.downloadQueueView.resizeColumnsToContents()
         self.downloadQueueView.setSelectionBehavior(QTableView.SelectRows)
         self.downloadQueueView.doubleClicked.connect(lambda: self.selectdownload())
-        #self.downloadQueueView = QListView()
-        #tab3.layout5.addWidget(self.downloadQueueView)
-        #self.downloadQueueView.setModel(self.downloadmodel)
-        #self.downloadQueueView.setModelColumn(0)
-        #self.downloadQueueView.setSelectionBehavior(QTableView.SelectRows)
-        #self.downloadQueueView.doubleClicked.connect(lambda: self.selectdownload())
 
         downloadbuttonbox1 = QWidget()
         tab3.layout.addWidget(downloadbuttonbox1, 0, 1)
@@ -618,7 +607,7 @@ class MainWindow(QMainWindow):
 
         self.setCentralWidget(tabs)
 
-        self.show()
+        #self.show()
 
     def clearCapture(self):
         self.captureText2.setText("")
@@ -627,6 +616,16 @@ class MainWindow(QMainWindow):
     def clearDownload(self):
         self.downloadText2.setText("")
         self.downloadparseName.setText("")
+
+    def capturerefresh(self):
+        self.capturemodel.layoutAboutToBeChanged.emit()
+        self.loadCaptures()
+        self.capturemodel.layoutChanged.emit()
+
+    def downloadrefresh(self):
+        self.downloadmodel.layoutAboutToBeChanged.emit()
+        self.loadDownloads()
+        self.downloadmodel.layoutChanged.emit()
 
     def selectcapture(self):
         indexes = self.captureQueueView.selectionModel().selectedRows()
@@ -857,7 +856,6 @@ class MainWindow(QMainWindow):
             self.downloadsegsdsp.setVisible(True)
             self.downloadsegspeeddsp.setVisible(True)
 
-
     def CaptureNow(self):
         k = strftime("%Y%m%d%H%M%S", gmtime())
         u = self.captureText2.text()
@@ -878,11 +876,25 @@ class MainWindow(QMainWindow):
             q = "Lowest"
         else:
             q = "Select"
-        c = dict(cid=k, url=u, quality=q, option=o, filename=f)
+        c = dict(cid=k, url=u, auto=a, quality=q, option=o, filename=f)
 
         with open("capture_temp.json", "w") as f:
             linkf = json.dump(c, f)
         self.start_capture(u)
+        self.removecompletecaptures(u)
+
+    def removecompletecaptures(self, u):
+        with open("captures.json", "r") as f:
+            captures = json.load(f)
+        match = u in captures
+        if match:
+            self.message('Current capture found in queue.')
+            for index in captures:
+                m = u in index
+                if m:
+                    self.capturemodel.removeRow(index.row())
+                    self.message('Removing captured item from queue.')
+
 
     def DownloadNow(URL, File):
         if File:
@@ -968,8 +980,18 @@ class MainWindow(QMainWindow):
             pass
 
     def refresh_downloads(d):
-        MainWindow.downloads = d
-        #MainWindow.downloadmodel.layoutChanged.emit()
+        self = MainWindow()
+        self.downloadmodel.layoutAboutToBeChanged.emit()
+        self.downloads = d
+        self.downloadmodel.layoutChanged.emit()
+
+    def start_download_from_select(u):
+        self = MainWindow()
+        self.start_download(u)
+
+    def loadPreferences(self):
+        dlg = PreferencesDialog()
+        dlg.exec_()
 
 class QualitySelectDialog(QDialog):
     def __init__(self):
@@ -1001,7 +1023,8 @@ class QualitySelectDialog(QDialog):
         self.captureView.resizeColumnsToContents()
         selectButton = QPushButton("Select")
         self.layout.addWidget(selectButton)
-        selectButton.clicked.connect(lambda: self.add2Queue())
+        selectButton.clicked.connect(lambda: self.select())
+
     def loadDownloads(self):
         try:
             with open("downloads.json", "r") as f:
@@ -1010,7 +1033,7 @@ class QualitySelectDialog(QDialog):
             self.downloads = []
             pass
 
-    def add2Queue(self):
+    def select(self):
         indexes = self.captureView.selectionModel().selectedRows()
         index = indexes[0]
         uselect = index.row()
@@ -1022,23 +1045,339 @@ class QualitySelectDialog(QDialog):
             captures = json.load(f)
         cdump = json.dumps(captures)
         cd = json.loads(cdump)
+        a = cd['auto']
+        if a:
+            self.DownloadFromQueue(u)
+        else:
+            self.add2Queue(u)
+
+    def add2Queue(self, u):
+        with open("capture_temp.json", "r") as f:
+            captures = json.load(f)
+        cdump = json.dumps(captures)
+        cd = json.loads(cdump)
         k = cd['cid']
         o = cd['option']
         f = cd['filename']
         if f == '':
             o = "None"
             f = "None"
-        # print('cid=' + k + ', url=' + u +', option=' + o + ', filename=' + f)
         self.downloadmodel.appendRow(k, u, o, f)
-        # self.downloadmodel.layoutChanged.emit()
         MainWindow.refresh_downloads(self.downloads)
         self.close()
+
+    def DownloadFromQueue(self, u):
+        k = strftime("%Y%m%d%H%M%S", gmtime())
+        with open("capture_temp.json", "r") as f:
+            captures = json.load(f)
+        cdump = json.dumps(captures)
+        cd = json.loads(cdump)
+        o = cd['option']
+        f = cd['filename']
+        c = dict(cid=k, url=u, option=o, filename=f)
+        with open("download_temp.json", "w") as f:
+            linkf = json.dump(c, f)
+        #MainWindow.start_download_from_select(u)
+        self.add2Queue(u)
+        #self.close()
 
 class PreferencesDialog(QDialog):
     def __init__(self):
         super().__init__()
 
         self.setWindowTitle("Preferences")
+
+
+
+        tagFont = QtGui.QFont()
+        tagFont.setBold(True)
+
+        self.resize(QSize(600, 300))
+        self.scrollLayout = QVBoxLayout()
+        self.layout = QVBoxLayout()
+        self.layout1 = QHBoxLayout()
+        self.layout2 = QHBoxLayout()
+        self.layout3 = QHBoxLayout()
+        self.layout4 = QHBoxLayout()
+        self.layout5 = QHBoxLayout()
+        self.layout6 = QHBoxLayout()
+        self.layout7 = QHBoxLayout()
+        self.layout8 = QHBoxLayout()
+        self.layout9 = QHBoxLayout()
+        self.layout10 = QVBoxLayout()
+        self.layout11 = QHBoxLayout()
+        self.layout12 = QHBoxLayout()
+        self.layout13 = QVBoxLayout()
+        self.layout14 = QVBoxLayout()
+        self.setLayout(self.layout)
+
+        generalLabel = QLabel("General Options")
+        self.layout.addWidget(generalLabel)
+        generalLabel.setFont(tagFont)
+
+        generalbox1 = QWidget()
+        self.layout.addWidget(generalbox1)
+        generalbox1.setLayout(self.layout2)
+
+        self.directoryActive = QCheckBox("Use directory path for temporarily downloaded files:")
+        self.layout2.addWidget(self.directoryActive)
+        self.directoryFolder = QLineEdit()
+        self.layout2.addWidget(self.directoryFolder)
+        self.folderButton = QPushButton("Select")
+        self.layout2.addWidget(self.folderButton)
+        self.folderButton.clicked.connect(lambda: self.directory_select())
+        self.layout2.setAlignment(Qt.AlignTop)
+
+        generalbox1.setContentsMargins(0, 0, 0, 0)
+
+        playlistLabel = QLabel("Playlist Options")
+        self.layout.addWidget(playlistLabel)
+        playlistLabel.setFont(tagFont)
+
+        playlistbox1 = QWidget()
+        self.layout.addWidget(playlistbox1)
+        playlistbox1.setLayout(self.layout3)
+        self.languageActive = QCheckBox("Use Preferred language when multiple audio streams with different languages are available:")
+        self.layout3.addWidget(self.languageActive)
+        self.languageSelect = QComboBox()
+        self.layout3.addWidget(self.languageSelect)
+        self.languageSelect.addItems(["English", "French", "German", "Japanese", "Chinese"])
+        self.layout3.setAlignment(Qt.AlignTop)
+
+        playlistbox2 = QWidget()
+        self.layout.addWidget(playlistbox2)
+        playlistbox2.setLayout(self.layout4)
+        self.subtitlesActive = QCheckBox(
+            "Use Preferred language when multiple subtitles streams with different languages are available:")
+        self.layout4.addWidget(self.subtitlesActive)
+        self.subtitlesSelect = QComboBox()
+        self.layout4.addWidget(self.subtitlesSelect)
+        self.subtitlesSelect.addItems(["English", "French", "German", "Japanese", "Chinese"])
+        self.layout4.setAlignment(Qt.AlignTop)
+
+        playlistbox3 = QWidget()
+        self.layout.addWidget(playlistbox3)
+        playlistbox3.setLayout(self.layout5)
+        self.aqActive = QCheckBox(
+            "Use automatic selection of resolution streams with highest bandwidth stream variant from playlist:")
+        self.layout5.addWidget(self.aqActive)
+        self.aqSelect = QComboBox()
+        self.layout5.addWidget(self.aqSelect)
+        self.aqSelect.addItems(["lowest", "min", "144p", "240p", "360p", "480p", "720p", "hd", "1080p", "fhd", "2k", "1440p", "qhd", "4k", "8k", "highest", "max"])
+        self.layout5.setAlignment(Qt.AlignTop)
+
+        playlistbox1.setContentsMargins(0, 0, 0, 0)
+        playlistbox2.setContentsMargins(0, 0, 0, 0)
+        playlistbox3.setContentsMargins(0, 0, 0, 0)
+
+        clientLabel = QLabel("Client Options")
+        self.layout.addWidget(clientLabel)
+        clientLabel.setFont(tagFont)
+
+        clientbox1 = QWidget()
+        self.layout.addWidget(clientbox1)
+        clientbox1.setLayout(self.layout6)
+        self.certificatesActive = QCheckBox(
+            "Skip checking and validation of site certificates.")
+        self.layout6.addWidget(self.certificatesActive)
+        self.layout6.setAlignment(Qt.AlignTop)
+
+        clientbox2 = QWidget()
+        self.layout.addWidget(clientbox2)
+        clientbox2.setLayout(self.layout7)
+        self.cookiesActive = QCheckBox(
+            "Use cookies values to fill request client:")
+        self.layout7.addWidget(self.cookiesActive)
+        self.cookiesText = QLineEdit()
+        self.layout7.addWidget(self.cookiesText)
+        self.layout7.setAlignment(Qt.AlignTop)
+
+        clientbox3 = QWidget()
+        self.layout.addWidget(clientbox3)
+        clientbox3.setLayout(self.layout8)
+        self.headersActive = QCheckBox(
+            "Use custom headers for requests (In <KEY> <VALUE> format):")
+        self.layout8.addWidget(self.headersActive)
+        self.headersText = QLineEdit()
+        self.layout8.addWidget(self.headersText)
+        self.addHeaderButton = QPushButton("Add")
+        self.addHeaderButton.clicked.connect(lambda: self.addHeader())
+        self.layout8.addWidget(self.addHeaderButton)
+        self.layout8.setAlignment(Qt.AlignTop)
+
+        clientbox4 = QWidget()
+        self.layout.addWidget(clientbox4)
+        clientbox4.setLayout(self.layout9)
+        self.headersView = QListWidget()
+        self.headersView.itemDoubleClicked.connect(lambda: self.selectHeader())
+        self.headersView.setFixedSize(750, 75)
+        self.layout9.addWidget(self.headersView)
+        headerbtnbox = QWidget()
+        self.layout9.addWidget(headerbtnbox)
+        headerbtnbox.setLayout(self.layout10)
+        self.removeHeaderButton = QPushButton("Remove")
+        self.layout10.addWidget(self.removeHeaderButton)
+        self.removeHeaderButton.clicked.connect(lambda: self.removeHeader())
+        self.clearHeaderButton = QPushButton("Clear")
+        self.layout10.addWidget(self.clearHeaderButton)
+        self.clearHeaderButton.clicked.connect(lambda: self.clearHeader())
+        self.layout9.setAlignment(Qt.AlignTop)
+        self.layout10.setAlignment(Qt.AlignTop)
+
+        clientbox5 = QWidget()
+        self.layout.addWidget(clientbox5)
+        clientbox5.setLayout(self.layout11)
+        self.domainActive = QCheckBox(
+            "Use custom cookies per domain to fill request client (in <SET_COOKIE> <URL> format):")
+        self.layout11.addWidget(self.domainActive)
+        self.domainText = QLineEdit()
+        self.layout11.addWidget(self.domainText)
+        self.addDomainButton = QPushButton("Add")
+        self.addDomainButton.clicked.connect(lambda: self.addDomain())
+        self.layout11.addWidget(self.addDomainButton)
+
+        clientbox6 = QWidget()
+        self.layout.addWidget(clientbox6)
+        clientbox6.setLayout(self.layout12)
+        self.domainView = QListWidget()
+        self.domainView.itemDoubleClicked.connect(lambda: self.selectDomain())
+        self.domainView.setFixedSize(750, 75)
+        self.layout12.addWidget(self.domainView)
+        domainbtnbox = QWidget()
+        self.layout12.addWidget(domainbtnbox)
+        domainbtnbox.setLayout(self.layout13)
+        self.removeDomainButton = QPushButton("Remove")
+        self.layout13.addWidget(self.removeDomainButton)
+        self.removeDomainButton.clicked.connect(lambda: self.removeDomain())
+        self.clearDomainButton = QPushButton("Clear")
+        self.layout13.addWidget(self.clearDomainButton)
+        self.clearDomainButton.clicked.connect(lambda: self.clearDomain())
+        self.layout12.setAlignment(Qt.AlignTop)
+        self.layout13.setAlignment(Qt.AlignTop)
+
+        clientbox7 = QWidget()
+        self.layout.addWidget(clientbox7)
+        clientbox7.setLayout(self.layout14)
+        self.agentActive = QCheckBox(
+            "Use custom agent header for requests:")
+        self.layout14.addWidget(self.agentActive)
+        self.agentSelect = QComboBox()
+        self.layout14.addWidget(self.agentSelect)
+        self.agentSelect.addItems([
+            "Mozilla/5.0 (Windows NT 6.1; Win64; x64; rv:47.0) Gecko/20100101 Firefox/47.0",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X x.y; rv:42.0) Gecko/20100101 Firefox/42.0",
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.103 Safari/537.36",
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.106 Safari/537.36 OPR/38.0.2220.41",
+            "Opera/9.80 (Macintosh; Intel Mac OS X; U; en) Presto/2.2.15 Version/10.00",
+            "Opera/9.60 (Windows NT 6.0; U; en) Presto/2.1.1",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36 Edg/91.0.864.59",
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 13_5_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.1.1 Mobile/15E148 Safari/604.1"
+        ])
+        self.layout14.setAlignment(Qt.AlignTop)
+
+        clientbox1.setContentsMargins(0, 0, 0, 0)
+        clientbox2.setContentsMargins(0, 0, 0, 0)
+        clientbox3.setContentsMargins(0, 0, 0, 0)
+        clientbox4.setContentsMargins(0, 0, 0, 0)
+        clientbox5.setContentsMargins(0, 0, 0, 0)
+        clientbox6.setContentsMargins(0, 0, 0, 0)
+        clientbox7.setContentsMargins(0, 0, 0, 0)
+
+        self.saveButton = QPushButton("Save")
+        self.layout.addWidget(self.saveButton)
+        self.saveButton.clicked.connect(lambda: self.savePreferences())
+
+        self.layout.setAlignment(Qt.AlignTop)
+        
+
+    def directory_select(self):
+        file = str(QFileDialog.getExistingDirectory(self, "Select Directory"))
+        self.directoryFolder.setText(file)
+
+    def addHeader(self):
+        header = self.headersText.text()
+        self.headersView.addItem(header)
+        self.headersText.setText("")
+
+    def removeHeader(self):
+        selected = self.headersView.currentRow()
+        if selected:
+            self.headersView.takeItem(selected)
+
+    def clearHeader(self):
+        self.headersView.clear()
+
+    def selectHeader(self):
+        selected = self.headersView.currentItem()
+        self.headersText.setText(str(selected))
+
+    def addDomain(self):
+        domain = self.domainText.text()
+        self.domainView.addItem(domain)
+        self.domainText.setText("")
+
+    def removeDomain(self):
+        selected = self.domainView.currentRow()
+        if selected:
+            self.domainView.takeItem(selected)
+
+    def clearDomain(self):
+        self.domainView.clear()
+
+    def selectDomain(self):
+        selected = self.domainView.currentItem()
+        self.domainText.setText(str(selected))
+
+    def savePreferences(self):
+        items = []
+        for x in range(self.headersView.count()):
+            item = self.headersView.item(x).text()
+            items.append(str(item))
+        da = self.directoryActive.checkState()
+        if da:
+            da = 'True'
+        else:
+            da = 'False'
+        d = self.directoryFolder.text()
+        la = self.languageActive.checkState()
+        if la:
+            la = 'True'
+        else:
+            la = 'False'
+        l = self.languageSelect.currentText()
+        sa = self.subtitlesActive.checkState()
+        if sa:
+            sa = 'True'
+        else:
+            sa = 'False'
+        s = self.subtitlesSelect.currentText()
+        aqa = self.aqActive.checkState()
+        if aqa:
+            aqa = 'True'
+        else:
+            aqa = 'False'
+        aq = self.aqSelect.currentText()
+        certa = self.certificatesActive.checkState()
+        ca = self.cookiesActive.checkState()
+        if ca:
+            ca = 'True'
+        else:
+            ca = 'False'
+        c = self.cookiesText.text()
+        ha = self.headersActive.checkState()
+        if ha:
+            ha = 'True'
+        else:
+            ha = 'False'
+        h = items
+
+
+
+        data = dict(da=da, d=d, la=la, l=l, sa=sa, s=s, aqa=aqa, aq=aq, certa=certa, ca=ca, c=c, ha=ha, h=h)
+
+        with open("preferences.json", "w") as f:
+            linkf = json.dump(data, f)
+        print(data)
 
 
 
