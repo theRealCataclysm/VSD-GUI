@@ -22,7 +22,7 @@ pip install PySide2
 - [X] Enable downloads and captures to be conducted in seperate process from UI.
 - [X] Enable capture through UI.
 - [X] Allow selection of available video quality from capture.
-- [ ] Allow user set auto selection of video quality.
+- [X] Allow user set auto selection of video quality.
 - [X] Create queue system for captures.
 - [X] Enable auto add to download queue after capture.
 - [ ] Enable auto capture from queue.
@@ -31,8 +31,9 @@ pip install PySide2
 - [ ] Allow auto downloading from queue.
 - [X] Display of download status information.
 - [X] Graphical progress bars.
-- [ ] Enable auto renaming of files after download completes.
-- [ ] Enable permanent user set working directory.
+- [X] Enable auto renaming of files after download completes.
+- [X] Enable permanent user set working directory.
+- [X] Enable usage of all flags.
 - [ ] Create a pyinstaller release of the software.
 
 # Error Reporting
