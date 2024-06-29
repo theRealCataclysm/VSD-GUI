@@ -5,8 +5,11 @@ import re
 import json
 import time
 import traceback
+import qdarktheme
 from os.path import exists
 from time import strftime, gmtime
+import requests
+import more_itertools
 from PySide2 import QtCore, QtGui
 from PySide2.QtCore import Qt, QSize, QProcess, QByteArray, QTimer, QProcessEnvironment, QObject, QRunnable, Slot, Signal, QThreadPool
 from PySide2.QtWidgets import (
@@ -287,6 +290,8 @@ seg_re = re.compile("[0-9]+/[0-9]+")
 segspeed_re = re.compile("[0-9]+.[0-9]+ SEG/s")
 dfilename_re = re.compile("vsd_\S+")
 init_re = re.compile("INFO waiting for CTRL(.*)C signal")
+
+
 def simple_percent_parser(output):
     """
     Matches lines using the progress_re regex,
@@ -296,11 +301,15 @@ def simple_percent_parser(output):
     if m:
         pc_complete = m.group(1)
         return int(pc_complete)
+
+
 def video_link_locator(output):
     m = video_re.search(output)
     if m:
         videoURL = m.group()
         return videoURL
+
+
 def download_size(output):
     m = size_re.search(output)
     a = alt_size_re.search(output)
@@ -310,35 +319,49 @@ def download_size(output):
     if a:
         pc_complete = a.group()
         return pc_complete
+
+
 def download_time(output):
     m = time_re.search(output)
     if m:
         pc_complete = m.group()
         return pc_complete
+
+
 def download_mbspeed(output):
     m = mbspeed_re.search(output)
     if m:
         pc_complete = m.group()
         return pc_complete
+
+
 def download_seg(output):
     m = seg_re.search(output)
     if m:
         pc_complete = m.group()
         return pc_complete
+
+
 def download_segpeed(output):
     m = segspeed_re.search(output)
     if m:
         pc_complete = m.group()
         return pc_complete
+
+
 def download_filename(output):
     m = dfilename_re.search(output)
     if m:
         pc_complete = m.group()
         return pc_complete
+
+
 def capture_init(output):
     m = init_re.search(output)
     if m:
         return True
+
+
 class QSelectModel(QtCore.QAbstractTableModel):
     def __init__(self, data, headers):
         super(QSelectModel, self).__init__()
@@ -368,6 +391,8 @@ class QSelectModel(QtCore.QAbstractTableModel):
 
             if orientation == Qt.Vertical:
                 return str(section)
+
+
 class CaptureModel(QtCore.QAbstractTableModel):
     def __init__(self, data, headers):
         super(CaptureModel, self).__init__()
@@ -380,6 +405,9 @@ class CaptureModel(QtCore.QAbstractTableModel):
             column = index.column()
             column_key = self._headers[column]
             return self._data[index.row()][column_key]
+        if role == Qt.EditRole:
+            value = self._data[index.row()][index.column()]
+            return str(value)
 
     def rowCount(self, parent=QtCore.QModelIndex()):
         # The length of the outer list.
@@ -399,12 +427,9 @@ class CaptureModel(QtCore.QAbstractTableModel):
                 return str(section)
 
     def appendRow(self, k, u, a, q, o, f):
-        if self._data == None:
-            self._data = dict(cid=k, url=u, auto=a, quality=q, option=o, filename=f)
-        else:
-            self.beginInsertRows(QtCore.QModelIndex(), self.rowCount(), self.rowCount())
-            self._data.append(dict(cid=k, url=u, auto=a, quality=q, option=o, filename=f))
-            self.endInsertRows()
+        self.beginInsertRows(QtCore.QModelIndex(), self.rowCount(), self.rowCount())
+        self._data.append(dict(cid=k, url=u, auto=a, quality=q, option=o, filename=f))
+        self.endInsertRows()
         self.save()
 
     def removeRow(self, row):
@@ -413,9 +438,20 @@ class CaptureModel(QtCore.QAbstractTableModel):
         self.endRemoveRows()
         self.save()
 
+    def setData(self, index, value, role=Qt.EditRole):
+        if role == Qt.EditRole:
+            column = index.column()
+            column_key = self._headers[column]
+            self._data[index.row()][column_key] = value
+            self.save()
+            return True
+        return False
+
     def save(self):
         with open("captures.json", "w") as f:
             data = json.dump(self._data, f)
+
+
 class DownloadModel(QtCore.QAbstractTableModel):
     def __init__(self, data, headers):
         super(DownloadModel, self).__init__()
@@ -428,6 +464,9 @@ class DownloadModel(QtCore.QAbstractTableModel):
             column = index.column()
             column_key = self._headers[column]
             return self._data[index.row()][column_key]
+        if role == Qt.EditRole:
+            value = self._data[index.row()][index.column()]
+            return str(value)
 
     def rowCount(self, parent=QtCore.QModelIndex()):
         # The length of the outer list.
@@ -442,17 +481,13 @@ class DownloadModel(QtCore.QAbstractTableModel):
         if role == Qt.DisplayRole:
             if orientation == Qt.Horizontal:
                 return str(self._headers[section])
-
             if orientation == Qt.Vertical:
                 return str(section)
 
     def appendRow(self, k, u, o, f):
-        if self._data == None:
-            self._data = dict(cid=k, url=u, option=o, filename=f)
-        else:
-            self.beginInsertRows(QtCore.QModelIndex(), self.rowCount(), self.rowCount())
-            self._data.append(dict(cid=k, url=u, option=o, filename=f))
-            self.endInsertRows()
+        self.beginInsertRows(QtCore.QModelIndex(), self.rowCount(), self.rowCount())
+        self._data.append(dict(cid=k, url=u, option=o, filename=f))
+        self.endInsertRows()
         self.save()
 
     def removeRow(self, row):
@@ -461,14 +496,28 @@ class DownloadModel(QtCore.QAbstractTableModel):
         self.endRemoveRows()
         self.save()
 
+    def setData(self, index, value, role=Qt.EditRole):
+        if role == Qt.EditRole:
+            column = index.column()
+            column_key = self._headers[column]
+            self._data[index.row()][column_key] = value
+            #self._data[index.row()][index.column()] = value
+            self.save()
+            return True
+        return False
+
     def save(self):
         with open("downloads.json", "w") as f:
             data = json.dump(self._data, f)
+
+
 class WorkerSignals(QObject):
     finished = Signal()
     error = Signal(tuple)
     result = Signal(object)
     progress = Signal(int)
+
+
 class Worker(QRunnable):
     '''
     Worker thread
@@ -512,6 +561,8 @@ class Worker(QRunnable):
             self.signals.result.emit(result)  # Return the result of the processing
         finally:
             self.signals.finished.emit()  # Done
+
+
 class MainWindow(QMainWindow):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -519,7 +570,7 @@ class MainWindow(QMainWindow):
         self.downloads = []
         self.links = []
         self.p = None
-
+        self.last = ''
         self.setWindowTitle("VSD GUI")
 
         self.loadCaptures()
@@ -531,7 +582,7 @@ class MainWindow(QMainWindow):
         ddump = json.dumps(self.downloads)
         dd = json.loads(ddump)
 
-        cheaders = ['url', 'quality', 'option', 'filename']
+        cheaders = ['url', 'auto', 'quality', 'option', 'filename']
         self.capturemodel = CaptureModel(cd, cheaders)
 
         dheaders = ['url', 'option', 'filename']
@@ -547,10 +598,10 @@ class MainWindow(QMainWindow):
 
         self.resize(QSize(1000, 500))
         self.layout = QVBoxLayout()
-        tabs = QTabWidget(self)
-        tabs.setDocumentMode(True)
-        tabs.setTabPosition(QTabWidget.North)
-        tabs.setMovable(True)
+        self.tabs = QTabWidget(self)
+        self.tabs.setDocumentMode(True)
+        self.tabs.setTabPosition(QTabWidget.North)
+        self.tabs.setMovable(True)
 
         tab1 = QWidget(self)
         tab1.layout1 = QVBoxLayout()
@@ -575,8 +626,10 @@ class MainWindow(QMainWindow):
         tab1.layout1.addWidget(self.captureView)
         self.captureView.setModel(self.capturemodel)
         self.captureView.setColumnWidth(0, 450)
-        self.captureView.setColumnWidth(3, 150)
+        self.captureView.setColumnWidth(4, 175)
         self.captureView.resizeColumnsToContents()
+        self.captureView.setSelectionBehavior(QTableView.SelectRows)
+        self.captureView.doubleClicked.connect(lambda: self.select("c"))
 
         row2 = QWidget()
         tab1.layout1.addWidget(row2)
@@ -595,8 +648,10 @@ class MainWindow(QMainWindow):
         tab1.layout1.addWidget(self.downloadView)
         self.downloadView.setModel(self.downloadmodel)
         self.downloadView.setColumnWidth(0, 450)
-        self.downloadView.setColumnWidth(2, 150)
+        self.downloadView.setColumnWidth(2, 175)
         self.downloadView.resizeColumnsToContents()
+        self.downloadView.setSelectionBehavior(QTableView.SelectRows)
+        self.downloadView.doubleClicked.connect(lambda: self.select("d"))
 
         self.StartButton = QPushButton("Start Queue Processing")
         tab1.layout1.addWidget(self.StartButton)
@@ -613,242 +668,257 @@ class MainWindow(QMainWindow):
 
         tab1.layout1.setAlignment(Qt.AlignTop)
 
-        tab2 = QWidget()
-        tab2.layout = QGridLayout()
-        tab2.layout2 = QGridLayout()
-        tab2.layout3 = QHBoxLayout()
-        tab2.layout4 = QHBoxLayout()
-        tab2.layout5 = QHBoxLayout()
-        tab2.layout6 = QHBoxLayout()
-        tab2.layout7 = QVBoxLayout()
-        tab2.layout8 = QVBoxLayout()
-        tab2.setLayout(tab2.layout)
+        self.tab2 = QWidget()
+        self.tab2.layout = QGridLayout()
+        self.tab2.layout2 = QGridLayout()
+        self.tab2.layout3 = QHBoxLayout()
+        self.tab2.layout4 = QHBoxLayout()
+        self.tab2.layout5 = QHBoxLayout()
+        self.tab2.layout6 = QHBoxLayout()
+        self.tab2.layout7 = QVBoxLayout()
+        self.tab2.layout8 = QVBoxLayout()
+        self.tab2.setLayout(self.tab2.layout)
 
         capturegroupbox1 = QWidget()
-        tab2.layout.addWidget(capturegroupbox1, 0, 0)
-        capturegroupbox1.setLayout(tab2.layout2)
+        self.tab2.layout.addWidget(capturegroupbox1, 0, 0)
+        capturegroupbox1.setLayout(self.tab2.layout2)
 
         capturerow1 = QWidget()
-        tab2.layout2.addWidget(capturerow1, 0, 0)
-        capturerow1.setLayout(tab2.layout3)
+        self.tab2.layout2.addWidget(capturerow1, 0, 0)
+        capturerow1.setLayout(self.tab2.layout3)
         captureLabel2 = QLabel("URL to Capture:")
-        tab2.layout3.addWidget(captureLabel2)
+        self.tab2.layout3.addWidget(captureLabel2)
+        self.cidText = QLineEdit()
+        self.tab2.layout3.addWidget(self.cidText)
+        self.cidText.setVisible(False)
         self.captureText2 = QLineEdit()
-        tab2.layout3.addWidget(self.captureText2)
+        self.tab2.layout3.addWidget(self.captureText2)
 
         capturerow2 = QWidget()
-        tab2.layout2.addWidget(capturerow2, 1, 0)
-        capturerow2.setLayout(tab2.layout4)
+        self.tab2.layout2.addWidget(capturerow2, 1, 0)
+        capturerow2.setLayout(self.tab2.layout4)
         self.autoDownload = QCheckBox("Auto Download after capture")
-        tab2.layout4.addWidget(self.autoDownload)
+        self.tab2.layout4.addWidget(self.autoDownload)
         self.autoDownload.setCheckState(Qt.Checked)
         self.autoDownload.stateChanged.connect(self.ADstate)
         self.downloadQuality = QComboBox()
-        tab2.layout4.addWidget(self.downloadQuality)
+        self.tab2.layout4.addWidget(self.downloadQuality)
         self.downloadQuality.addItems(["Select", "Playlist", "Lowest", "Highest"])
 
         capturerow3 = QWidget()
-        tab2.layout2.addWidget(capturerow3, 2, 0)
-        capturerow3.setLayout(tab2.layout5)
+        self.tab2.layout2.addWidget(capturerow3, 2, 0)
+        capturerow3.setLayout(self.tab2.layout5)
         self.captureparseOutput = QCheckBox("After Processing:")
-        tab2.layout5.addWidget(self.captureparseOutput)
+        self.tab2.layout5.addWidget(self.captureparseOutput)
         self.captureparseOutput.setCheckState(Qt.Unchecked)
         self.captureMuxOutput = QRadioButton("Send to ffmpeg")
-        tab2.layout5.addWidget(self.captureMuxOutput)
+        self.tab2.layout5.addWidget(self.captureMuxOutput)
         self.captureMuxOutput.setChecked(True)
         self.captureMuxOutput.setEnabled(False)
         self.capturerenameOutput = QRadioButton("Rename at completion")
-        tab2.layout5.addWidget(self.capturerenameOutput)
+        self.tab2.layout5.addWidget(self.capturerenameOutput)
         self.capturerenameOutput.setChecked(False)
         self.capturerenameOutput.setEnabled(False)
         filenameLabel = QLabel("As:")
-        tab2.layout5.addWidget(filenameLabel)
+        self.tab2.layout5.addWidget(filenameLabel)
         self.captureparseOutput.stateChanged.connect(self.captureParsestate)
         self.captureparseName = QLineEdit()
-        tab2.layout5.addWidget(self.captureparseName)
+        self.tab2.layout5.addWidget(self.captureparseName)
         self.captureparseName.setEnabled(False)
 
         capturerow4 = QWidget()
-        tab2.layout.addWidget(capturerow4, 1, 0)
-        capturerow4.setLayout(tab2.layout6)
+        self.tab2.layout.addWidget(capturerow4, 1, 0)
+        capturerow4.setLayout(self.tab2.layout6)
         self.captureQueueView = QTableView()
         self.captureQueueView.setShowGrid(False)
-        tab2.layout6.addWidget(self.captureQueueView)
+        self.tab2.layout6.addWidget(self.captureQueueView)
         self.captureQueueView.setModel(self.capturemodel)
         self.captureQueueView.setColumnWidth(0, 450)
-        self.captureQueueView.setColumnWidth(3, 150)
+        self.captureQueueView.setColumnWidth(3, 175)
         self.captureQueueView.resizeColumnsToContents()
         self.captureQueueView.setSelectionBehavior(QTableView.SelectRows)
         self.captureQueueView.doubleClicked.connect(lambda: self.select("c"))
 
         capturebuttonbox1 = QWidget()
-        tab2.layout.addWidget(capturebuttonbox1, 0, 1)
-        capturebuttonbox1.setLayout(tab2.layout7)
+        self.tab2.layout.addWidget(capturebuttonbox1, 0, 1)
+        capturebuttonbox1.setLayout(self.tab2.layout7)
         self.CaptureStartButton = QPushButton("Capture")
-        tab2.layout7.addWidget(self.CaptureStartButton)
+        self.tab2.layout7.addWidget(self.CaptureStartButton)
         self.CaptureStartButton.clicked.connect(lambda: self.CaptureNow())
-        self.CaptureStartButton.setFixedSize(150, 25)
+        self.CaptureStartButton.setFixedSize(175, 25)
         self.CaptureCancelButton = QPushButton("Cancel")
-        tab2.layout7.addWidget(self.CaptureCancelButton)
+        self.tab2.layout7.addWidget(self.CaptureCancelButton)
         self.CaptureCancelButton.clicked.connect(lambda: self.p.kill())
-        self.CaptureCancelButton.setFixedSize(150, 25)
+        self.CaptureCancelButton.setFixedSize(175, 25)
         self.CaptureCancelButton.setEnabled(False)
         CaptureClearButton = QPushButton("Clear")
-        tab2.layout7.addWidget(CaptureClearButton)
+        self.tab2.layout7.addWidget(CaptureClearButton)
         CaptureClearButton.clicked.connect(lambda: self.clearFields("c"))
-        CaptureClearButton.setFixedSize(150, 25)
+        CaptureClearButton.setFixedSize(175, 25)
+        self.CaptureUpdateButton = QPushButton("Update")
+        self.tab2.layout7.addWidget(self.CaptureUpdateButton)
+        self.CaptureUpdateButton.clicked.connect(lambda: self.updatecapture())
+        self.CaptureUpdateButton.setFixedSize(175, 25)
+        self.CaptureUpdateButton.setVisible(False)
 
         capturebuttonbox2 = QWidget()
-        tab2.layout.addWidget(capturebuttonbox2, 1, 1)
-        capturebuttonbox2.setLayout(tab2.layout8)
+        self.tab2.layout.addWidget(capturebuttonbox2, 1, 1)
+        capturebuttonbox2.setLayout(self.tab2.layout8)
         self.CaptureAddButton = QPushButton("Add to Queue")
-        tab2.layout8.addWidget(self.CaptureAddButton)
+        self.tab2.layout8.addWidget(self.CaptureAddButton)
         self.CaptureAddButton.clicked.connect(lambda: self.addcapture())
-        self.CaptureAddButton.setFixedSize(150, 25)
+        self.CaptureAddButton.setFixedSize(175, 25)
         CaptureRemoveButton = QPushButton("Remove from Queue")
-        tab2.layout8.addWidget(CaptureRemoveButton)
+        self.tab2.layout8.addWidget(CaptureRemoveButton)
         CaptureRemoveButton.clicked.connect(lambda: self.deletecapture())
-        CaptureRemoveButton.setFixedSize(150, 25)
+        CaptureRemoveButton.setFixedSize(175, 25)
 
         self.progressBar2 = QProgressBar()
         self.progressBar2.minimum = 1
         self.progressBar2.maximum = 100
-        tab2.layout.addWidget(self.progressBar2, 2, 0)
+        self.tab2.layout.addWidget(self.progressBar2, 2, 0)
         self.progressBar2.setVisible(False)
 
-        tab2.layout.setAlignment(Qt.AlignTop)
-        tab2.layout2.setAlignment(Qt.AlignTop)
-        tab2.layout3.setAlignment(Qt.AlignTop)
-        tab2.layout4.setAlignment(Qt.AlignTop)
-        tab2.layout5.setAlignment(Qt.AlignTop)
-        tab2.layout6.setAlignment(Qt.AlignTop)
-        tab2.layout7.setAlignment(Qt.AlignTop)
-        tab2.layout8.setAlignment(Qt.AlignTop)
+        self.tab2.layout.setAlignment(Qt.AlignTop)
+        self.tab2.layout2.setAlignment(Qt.AlignTop)
+        self.tab2.layout3.setAlignment(Qt.AlignTop)
+        self.tab2.layout4.setAlignment(Qt.AlignTop)
+        self.tab2.layout5.setAlignment(Qt.AlignTop)
+        self.tab2.layout6.setAlignment(Qt.AlignTop)
+        self.tab2.layout7.setAlignment(Qt.AlignTop)
+        self.tab2.layout8.setAlignment(Qt.AlignTop)
 
-        tab3 = QWidget()
-        tab3.layout = QGridLayout()
-        tab3.layout2 = QGridLayout()
-        tab3.layout3 = QHBoxLayout()
-        tab3.layout4 = QHBoxLayout()
-        tab3.layout5 = QVBoxLayout()
-        tab3.layout6 = QVBoxLayout()
-        tab3.layout7 = QVBoxLayout()
-        tab3.layout8 = QVBoxLayout()
-        tab3.setLayout(tab3.layout)
+        self.tab3 = QWidget()
+        self.tab3.layout = QGridLayout()
+        self.tab3.layout2 = QGridLayout()
+        self.tab3.layout3 = QHBoxLayout()
+        self.tab3.layout4 = QHBoxLayout()
+        self.tab3.layout5 = QVBoxLayout()
+        self.tab3.layout6 = QVBoxLayout()
+        self.tab3.layout7 = QVBoxLayout()
+        self.tab3.layout8 = QVBoxLayout()
+        self.tab3.setLayout(self.tab3.layout)
 
         downloadgroupbox1 = QWidget()
-        tab3.layout.addWidget(downloadgroupbox1, 0, 0)
-        downloadgroupbox1.setLayout(tab3.layout2)
+        self.tab3.layout.addWidget(downloadgroupbox1, 0, 0)
+        downloadgroupbox1.setLayout(self.tab3.layout2)
         downloadgroupbox1.setContentsMargins(0, 0, 0, 0)
 
         downloadrow1 = QWidget()
-        tab3.layout2.addWidget(downloadrow1)
-        downloadrow1.setLayout(tab3.layout3)
+        self.tab3.layout2.addWidget(downloadrow1)
+        downloadrow1.setLayout(self.tab3.layout3)
         downloadrow1.setContentsMargins(0, 0, 0, 0)
         downloadLabel2 = QLabel("URL to Download from:")
-        tab3.layout3.addWidget(downloadLabel2)
+        self.tab3.layout3.addWidget(downloadLabel2)
+        self.didText = QLineEdit()
+        self.tab2.layout3.addWidget(self.didText)
+        self.didText.setVisible(False)
         self.downloadText2 = QLineEdit()
-        tab3.layout3.addWidget(self.downloadText2)
+        self.tab3.layout3.addWidget(self.downloadText2)
 
         downloadrow2 = QWidget()
-        tab3.layout2.addWidget(downloadrow2, 1, 0)
-        downloadrow2.setLayout(tab3.layout4)
+        self.tab3.layout2.addWidget(downloadrow2, 1, 0)
+        downloadrow2.setLayout(self.tab3.layout4)
         downloadrow2.setContentsMargins(0, 0, 0, 0)
         self.downloadparseOutput = QCheckBox("After Processing:")
-        tab3.layout4.addWidget(self.downloadparseOutput)
+        self.tab3.layout4.addWidget(self.downloadparseOutput)
         self.downloadparseOutput.setCheckState(Qt.Unchecked)
         self.downloadMuxOutput = QRadioButton("Send to ffmpeg")
-        tab3.layout4.addWidget(self.downloadMuxOutput)
+        self.tab3.layout4.addWidget(self.downloadMuxOutput)
         self.downloadMuxOutput.setChecked(True)
         self.downloadMuxOutput.setEnabled(False)
         self.downloadrenameOutput = QRadioButton("Rename at completion")
-        tab3.layout4.addWidget(self.downloadrenameOutput)
+        self.tab3.layout4.addWidget(self.downloadrenameOutput)
         self.downloadrenameOutput.setChecked(False)
         self.downloadrenameOutput.setEnabled(False)
         filenameLabel = QLabel("As:")
-        tab3.layout4.addWidget(filenameLabel)
+        self.tab3.layout4.addWidget(filenameLabel)
         self.downloadparseName = QLineEdit()
-        tab3.layout4.addWidget(self.downloadparseName)
+        self.tab3.layout4.addWidget(self.downloadparseName)
         self.downloadparseName.setEnabled(False)
         self.downloadparseOutput.stateChanged.connect(self.downloadParsestate)
 
         downloadrow3 = QWidget()
-        tab3.layout.addWidget(downloadrow3, 1, 0)
-        downloadrow3.setLayout(tab3.layout5)
+        self.tab3.layout.addWidget(downloadrow3, 1, 0)
+        downloadrow3.setLayout(self.tab3.layout5)
         downloadrow3.setContentsMargins(0, 0, 0, 0)
         self.downloadQueueView = QTableView()
         self.downloadQueueView.setShowGrid(False)
-        tab3.layout5.addWidget(self.downloadQueueView)
+        self.tab3.layout5.addWidget(self.downloadQueueView)
         self.downloadQueueView.setModel(self.downloadmodel)
         self.downloadQueueView.setColumnWidth(0, 450)
-        self.downloadQueueView.setColumnWidth(3, 150)
+        self.downloadQueueView.setColumnWidth(3, 175)
         self.downloadQueueView.resizeColumnsToContents()
         self.downloadQueueView.setSelectionBehavior(QTableView.SelectRows)
-        self.downloadQueueView.doubleClicked.connect(lambda: self.select("d"))
 
         downloadbuttonbox1 = QWidget()
-        tab3.layout.addWidget(downloadbuttonbox1, 0, 1)
-        downloadbuttonbox1.setLayout(tab3.layout6)
+        self.tab3.layout.addWidget(downloadbuttonbox1, 0, 1)
+        downloadbuttonbox1.setLayout(self.tab3.layout6)
         downloadbuttonbox1.setContentsMargins(0, 0, 0, 0)
         self.DownloadStartButton = QPushButton("Download")
-        tab3.layout6.addWidget(self.DownloadStartButton)
+        self.tab3.layout6.addWidget(self.DownloadStartButton)
         self.DownloadStartButton.clicked.connect(
             lambda: self.DownloadNow())
-        self.DownloadStartButton.setFixedSize(150, 25)
+        self.DownloadStartButton.setFixedSize(175, 25)
         self.DownloadCancelButton = QPushButton("Cancel")
-        tab3.layout6.addWidget(self.DownloadCancelButton)
+        self.tab3.layout6.addWidget(self.DownloadCancelButton)
         self.DownloadCancelButton.clicked.connect(lambda: self.p.terminate())
-        self.DownloadCancelButton.setFixedSize(150, 25)
+        self.DownloadCancelButton.setFixedSize(175, 25)
         self.DownloadCancelButton.setEnabled(False)
         self.DownloadClearButton = QPushButton("Clear")
-        tab3.layout6.addWidget(self.DownloadClearButton)
+        self.tab3.layout6.addWidget(self.DownloadClearButton)
         self.DownloadClearButton.clicked.connect(lambda: self.clearFields("d"))
-        self.DownloadClearButton.setFixedSize(150, 25)
+        self.DownloadClearButton.setFixedSize(175, 25)
+        self.DownloadUpdateButton = QPushButton("Update")
+        self.tab3.layout6.addWidget(self.DownloadUpdateButton)
+        self.DownloadUpdateButton.clicked.connect(lambda: self.updatedownload())
+        self.DownloadUpdateButton.setFixedSize(175, 25)
+        self.DownloadUpdateButton.setVisible(False)
 
         downloadbuttonbox2 = QWidget()
-        tab3.layout.addWidget(downloadbuttonbox2, 1, 1)
-        downloadbuttonbox2.setLayout(tab3.layout7)
+        self.tab3.layout.addWidget(downloadbuttonbox2, 1, 1)
+        downloadbuttonbox2.setLayout(self.tab3.layout7)
         downloadbuttonbox2.setContentsMargins(0, 0, 0, 0)
         DownloadAddButton = QPushButton("Add to Queue")
-        tab3.layout7.addWidget(DownloadAddButton)
+        self.tab3.layout7.addWidget(DownloadAddButton)
         DownloadAddButton.clicked.connect(lambda: self.addDownload())
-        DownloadAddButton.setFixedSize(150, 25)
+        DownloadAddButton.setFixedSize(175, 25)
         DownloadRemoveButton = QPushButton("Remove from Queue")
-        tab3.layout7.addWidget(DownloadRemoveButton)
+        self.tab3.layout7.addWidget(DownloadRemoveButton)
         DownloadRemoveButton.clicked.connect(lambda: self.deletedownload())
-        DownloadRemoveButton.setFixedSize(150, 25)
+        DownloadRemoveButton.setFixedSize(175, 25)
 
         self.downloadtimedsp = QLineEdit()
-        tab3.layout7.addWidget(self.downloadtimedsp)
-        self.downloadtimedsp.setFixedWidth(150)
+        self.tab3.layout7.addWidget(self.downloadtimedsp)
+        self.downloadtimedsp.setFixedWidth(175)
         self.downloadtimedsp.setAlignment(Qt.AlignCenter)
         self.downloadtimedsp.setEnabled(False)
         self.downloadtimedsp.setVisible(False)
 
         self.downloadsizedsp = QLineEdit()
-        tab3.layout7.addWidget(self.downloadsizedsp)
-        self.downloadsizedsp.setFixedWidth(150)
+        self.tab3.layout7.addWidget(self.downloadsizedsp)
+        self.downloadsizedsp.setFixedWidth(175)
         self.downloadsizedsp.setAlignment(Qt.AlignCenter)
         self.downloadsizedsp.setEnabled(False)
         self.downloadsizedsp.setVisible(False)
 
         self.downloadmbspeeddsp = QLineEdit()
-        tab3.layout7.addWidget(self.downloadmbspeeddsp)
-        self.downloadmbspeeddsp.setFixedWidth(150)
+        self.tab3.layout7.addWidget(self.downloadmbspeeddsp)
+        self.downloadmbspeeddsp.setFixedWidth(175)
         self.downloadmbspeeddsp.setAlignment(Qt.AlignCenter)
         self.downloadmbspeeddsp.setEnabled(False)
         self.downloadmbspeeddsp.setVisible(False)
 
         self.downloadsegsdsp = QLineEdit()
-        tab3.layout7.addWidget(self.downloadsegsdsp)
-        self.downloadsegsdsp.setFixedWidth(150)
+        self.tab3.layout7.addWidget(self.downloadsegsdsp)
+        self.downloadsegsdsp.setFixedWidth(175)
         self.downloadsegsdsp.setAlignment(Qt.AlignCenter)
         self.downloadsegsdsp.setEnabled(False)
         self.downloadsegsdsp.setVisible(False)
 
         self.downloadsegspeeddsp = QLineEdit()
-        tab3.layout7.addWidget(self.downloadsegspeeddsp)
-        self.downloadsegspeeddsp.setFixedWidth(150)
+        self.tab3.layout7.addWidget(self.downloadsegspeeddsp)
+        self.downloadsegspeeddsp.setFixedWidth(175)
         self.downloadsegspeeddsp.setAlignment(Qt.AlignCenter)
         self.downloadsegspeeddsp.setEnabled(False)
         self.downloadsegspeeddsp.setVisible(False)
@@ -856,16 +926,16 @@ class MainWindow(QMainWindow):
         self.progressBar3 = QProgressBar()
         self.progressBar3.minimum = 1
         self.progressBar3.maximum = 100
-        tab3.layout.addWidget(self.progressBar3, 2, 0)
+        self.tab3.layout.addWidget(self.progressBar3, 2, 0)
         self.progressBar3.setVisible(False)
 
-        tab3.layout.setAlignment(Qt.AlignTop)
-        tab3.layout2.setAlignment(Qt.AlignTop)
-        tab3.layout3.setAlignment(Qt.AlignTop)
-        tab3.layout4.setAlignment(Qt.AlignTop)
-        tab3.layout5.setAlignment(Qt.AlignTop)
-        tab3.layout6.setAlignment(Qt.AlignTop)
-        tab3.layout7.setAlignment(Qt.AlignTop)
+        self.tab3.layout.setAlignment(Qt.AlignTop)
+        self.tab3.layout2.setAlignment(Qt.AlignTop)
+        self.tab3.layout3.setAlignment(Qt.AlignTop)
+        self.tab3.layout4.setAlignment(Qt.AlignTop)
+        self.tab3.layout5.setAlignment(Qt.AlignTop)
+        self.tab3.layout6.setAlignment(Qt.AlignTop)
+        self.tab3.layout7.setAlignment(Qt.AlignTop)
 
         tab4 = QWidget()
         tab4.layout = QGridLayout()
@@ -882,21 +952,25 @@ class MainWindow(QMainWindow):
 
         tab4.layout.setAlignment(Qt.AlignTop)
 
-        tabs.addTab(tab1, "Queue")
-        tabs.addTab(tab2, "Capture")
-        tabs.addTab(tab3, "Download")
-        tabs.addTab(tab4, "Status")
+        self.tabs.addTab(tab1, "Queue")
+        self.tabs.addTab(self.tab2, "Capture")
+        self.tabs.addTab(self.tab3, "Download")
+        self.tabs.addTab(tab4, "Status")
 
-        self.setCentralWidget(tabs)
+        self.setCentralWidget(self.tabs)
 
         #self.show()
+
     def clearFields(self, f):
         if f == "c":
             self.captureText2.setText("")
             self.captureparseName.setText("")
+            self.CaptureUpdateButton.setVisible(False)
         if f == "d":
             self.downloadText2.setText("")
             self.downloadparseName.setText("")
+            self.DownloadUpdateButton.setVisible(False)
+
     def refreshQueue(self, q):
         if q == "c":
             ddump = json.dumps(self.captures)
@@ -918,18 +992,26 @@ class MainWindow(QMainWindow):
             self.downloadView.setModel(self.downloadmodel)
             self.loadDownloads()
             self.downloadmodel.layoutChanged.emit()
+
     def select(self, f):
         if f == "c":
-            indexes = self.captureQueueView.selectionModel().selectedRows()
+            if self.tabs.currentIndex() == 0:
+                self.tabs.setCurrentIndex(1)
+                indexes = self.captureView.selectionModel().selectedRows()
+            else:
+                indexes = self.captureQueueView.selectionModel().selectedRows()
+            self.CaptureUpdateButton.setVisible(True)
             for index in sorted(indexes):
                 dselect = index.row()
                 with open("captures.json", "r") as f:
                     links = json.load(f)
                 s = links[dselect]
+                cid = s['cid']
                 u = s['url']
                 q = s['quality']
                 o = s['option']
                 f = s['filename']
+                self.cidText.setText(cid)
                 if q == 'Highest':
                     self.downloadQuality.setCurrentIndex(3)
                 elif q == 'Lowest':
@@ -947,16 +1029,23 @@ class MainWindow(QMainWindow):
                         self.capturerenameOutput.click()
                     self.captureparseName.setText(f)
         if f == "d":
-            indexes = self.downloadQueueView.selectionModel().selectedRows()
+            if self.tabs.currentIndex() == 0:
+                self.tabs.setCurrentIndex(2)
+                indexes = self.downloadView.selectionModel().selectedRows()
+            else:
+                indexes = self.downloadQueueView.selectionModel().selectedRows()
+            self.DownloadUpdateButton.setVisible(True)
             for index in sorted(indexes):
                 # Remove the item and refresh.
                 dselect = index.row()
                 with open("downloads.json", "r") as f:
                     links = json.load(f)
                 s = links[dselect]
+                cid = s['cid']
                 u = s['url']
                 o = s['option']
                 f = s['filename']
+                self.didText.setText(cid)
                 self.downloadText2.setText(u)
                 if f:
                     self.downloadparseOutput.setCheckState(Qt.Checked)
@@ -965,6 +1054,7 @@ class MainWindow(QMainWindow):
                     else:
                         self.downloadrenameOutput.click()
                     self.downloadparseName.setText(f)
+
     def ADstate(self, s):
         if (s == Qt.Checked):
             self.downloadQuality.setEnabled(True)
@@ -972,6 +1062,7 @@ class MainWindow(QMainWindow):
         else:
             self.downloadQuality.setEnabled(False)
             self.captureparseOutput.setEnabled(False)
+
     def captureParsestate(self, s):
         if (s == Qt.Checked):
             self.captureparseName.setEnabled(True)
@@ -981,6 +1072,7 @@ class MainWindow(QMainWindow):
             self.captureparseName.setEnabled(False)
             self.captureMuxOutput.setEnabled(False)
             self.capturerenameOutput.setEnabled(False)
+
     def downloadParsestate(self, s):
         if (s == Qt.Checked):
             self.downloadparseName.setEnabled(True)
@@ -990,12 +1082,14 @@ class MainWindow(QMainWindow):
             self.downloadparseName.setEnabled(False)
             self.downloadMuxOutput.setEnabled(False)
             self.downloadrenameOutput.setEnabled(False)
+
     def rename_file(self):
         with open("download_temp.json", "r") as f:
             dt = json.load(f)
             rn = dt['rename']
         if rn:
             fn = dt['fn']
+
             with open("preferences.json", "r") as f:
                 pref = json.load(f)
             da = pref['da']
@@ -1009,13 +1103,16 @@ class MainWindow(QMainWindow):
                     else:
                         os.rename(dfn, fn)
                         self.message("Renaming " + dfn + " to " + fn)
+
     def merge_two_dicts(self, x, y):
         """Given two dictionaries, merge them into a new dict as a shallow copy."""
         z = x.copy()
         z.update(y)
         return z
+
     def message(self, s):
         self.statustext.appendPlainText(s)
+
     def handle_stderr(self):
         errdata = self.p.readAllStandardError()
         errbytes = QByteArray(errdata)
@@ -1035,6 +1132,7 @@ class MainWindow(QMainWindow):
             self.progressBar3.setValue(progress)
             self.progressBar4.setValue(progress)
         self.message(stderr)
+
     def handle_stdout(self):
         outdata = self.p.readAllStandardOutput()
         outbytes = QByteArray(outdata)
@@ -1042,8 +1140,9 @@ class MainWindow(QMainWindow):
         stdout = strstdout.rstrip()
         downloadlinks = video_link_locator(stdout)
         init = capture_init(stdout)
-        if init:
-            last = ''
+        if init or (not init and downloadlinks):
+            init = True
+            self.last = ''
             self.t = QTimer()
             self.t.setInterval(5000)
             self.t.timeout.connect(self.timeout)
@@ -1051,15 +1150,16 @@ class MainWindow(QMainWindow):
             self.t.start()
         if downloadlinks:
             link = downloadlinks.replace("Detected ", "")
-            if last != link:
+            if self.last != link:
                 self.links.append(dict(link=link))
-            with open("out_temp.json", "w") as f:
-                linkf = json.dump(self.links, f)
-            last = link
-            self.t.stop()
+                with open("out_temp.json", "w") as f:
+                    linkf = json.dump(self.links, f)
+                self.last = link
+                self.t.stop()
             if not self.t.isActive():
                 self.t.start(2500)
         self.message(stdout)
+
     def timeout(self):
         if self.p:
             self.p.kill()
@@ -1068,13 +1168,14 @@ class MainWindow(QMainWindow):
             co = json.load(f)
         auto = co['auto']
         if auto:
-            dq = co['quality']
+            dq = co['q']
             if dq == "Select":
                 dlg = QualitySelectDialog()
                 dlg.open()
             else:
                 sq = self.findquality(dq)
                 self.add2DownloadQueue(sq)
+
     def handle_state(self, state):
         states = {
             QProcess.NotRunning: 'Not running',
@@ -1083,6 +1184,7 @@ class MainWindow(QMainWindow):
         }
         state_name = states[state]
         self.message(f"State changed: {state_name}")
+
     def process_finished(self):
         self.message("Process finished.")
         self.p = None
@@ -1098,6 +1200,7 @@ class MainWindow(QMainWindow):
         self.progressBar2.setVisible(False)
         self.progressBar3.setVisible(False)
         self.progressBar4.setVisible(False)
+
     def start_capture(self):
         if self.p is None:  # No process running.
             with open("capture_temp.json", "r") as f:
@@ -1115,11 +1218,13 @@ class MainWindow(QMainWindow):
             self.env.insert("Mode", "capture")
             self.p.setProcessEnvironment(self.env)
             self.removecompletecaptures(u)
+            #self.p.daemon = True
             self.p.start("vsd capture --color never " + u)
             self.StartButton.setEnabled(False)
             self.CaptureStartButton.setEnabled(False)
             self.DownloadStartButton.setEnabled(False)
             self.CaptureCancelButton.setEnabled(True)
+
     def start_download(self):
         if self.p is None:  # No process running.
             with open("download_temp.json", "r") as f:
@@ -1146,6 +1251,7 @@ class MainWindow(QMainWindow):
             self.progressBar2.setVisible(True)
             self.progressBar3.setVisible(True)
             self.progressBar4.setVisible(True)
+
     def CaptureNow(self):
         k = strftime("%Y%m%d%H%M%S", gmtime())
         u = self.captureText2.text()
@@ -1173,6 +1279,7 @@ class MainWindow(QMainWindow):
         with open("capture_temp.json", "w") as f:
             linkf = json.dump(c, f)
         self.start_capture()
+
     def removecompletecaptures(self, u):
         if u != '':
             with open("captures.json", "r") as f:
@@ -1184,6 +1291,7 @@ class MainWindow(QMainWindow):
                     self.message('Current capture found in queue.')
                     self.capturemodel.removeRow(index)
                     self.message('Removing captured item from queue.')
+
     def removecompletedownloads(self, u):
         if u != '':
             with open("downloads.json", "r") as f:
@@ -1195,6 +1303,7 @@ class MainWindow(QMainWindow):
                     self.message('Current download found in queue with index %d.' % index)
                     self.downloadmodel.removeRow(index)
                     self.message('Removing download item from queue.')
+
     def findquality(self, dq):
         playlist = False
         pl = ""
@@ -1247,6 +1356,7 @@ class MainWindow(QMainWindow):
             else:
                 self.message('search failed to find a suitable match.')
                 return "Failure"
+
     def DownloadNow(self):
         rn = self.downloadrenameOutput.isChecked()
         u = self.downloadText2.text()
@@ -1259,6 +1369,7 @@ class MainWindow(QMainWindow):
             with open("download_temp.json", "w") as f:
                 renamef = json.dump(rename, f)
             self.start_download()
+
     def addDownload(self):
         key = strftime("%Y%m%d%H%M%S", gmtime())
         http = self.downloadText2.text()
@@ -1276,6 +1387,7 @@ class MainWindow(QMainWindow):
         self.downloadmodel.layoutChanged.emit()
         self.downloadText2.setText("")
         self.downloadparseName.setText("")
+
     def addcapture(self):
         key = strftime("%Y%m%d%H%M%S", gmtime())
         http = self.captureText2.text()
@@ -1299,10 +1411,115 @@ class MainWindow(QMainWindow):
             Quality = "Playlist"
         else:
             Quality = "Select"
+
         self.capturemodel.appendRow(key, http, a, Quality, O, FileName)
         self.capturemodel.layoutChanged.emit()
         self.captureText2.setText("")
         self.captureparseName.setText("")
+
+    def updatecapture(self):
+        ckey = self.cidText.text()
+        http = self.captureText2.text()
+        a = self.autoDownload.isChecked()
+        Q = self.downloadQuality.currentIndex()
+        O1 = self.captureMuxOutput.isChecked()
+        O2 = self.capturerenameOutput.isChecked()
+        if O1:
+            O = 'MUX'
+        elif O2:
+            O = 'Rename'
+        else:
+            O = False
+        File = self.captureparseName.text()
+        FileName = str(File)
+        if Q == 3:
+            Quality = "Highest"
+        elif Q == 2:
+            Quality = "Lowest"
+        elif Q == 1:
+            Quality = "Playlist"
+        else:
+            Quality = "Select"
+        update = 0
+        for x in self.captures:
+            url = x['url']
+            i = self.captures.index(x)
+            if ckey == x['cid']:
+                update = update + 1
+                if http != x['url']:
+                    index = self.capturemodel.index(i, 0)
+                    self.capturemodel.setData(index, url)
+                    self.message(f'URL was updated for {url}')
+                    update = update + 1
+                if a != x['auto']:
+                    index = self.capturemodel.index(i, 1)
+                    self.capturemodel.setData(index, a)
+                    self.message(f'Auto download option was updated for {url}')
+                    update = update + 1
+                if Quality != x['quality']:
+                    index = self.capturemodel.index(i, 2)
+                    self.capturemodel.setData(index, Quality)
+                    self.message(f'Quality selection was updated for {url}')
+                    update = update + 1
+                if O != x['option']:
+                    index = self.capturemodel.index(i, 3)
+                    self.capturemodel.setData(index, O)
+                    self.message(f'After processing option was updated for {url}')
+                    update = update + 1
+                if FileName != x['filename']:
+                    index = self.capturemodel.index(i, 4)
+                    self.capturemodel.setData(index, FileName)
+                    self.message(f'File name was updated for {url}')
+                    update = update + 1
+
+        if update == 0:
+            self.addcapture()
+        elif update == 1:
+            self.message(f"Attempted to update parameters for {url}, but there was nothing changed.")
+        self.capturemodel.layoutChanged.emit()
+        self.clearFields("c")
+
+    def updatedownload(self):
+        ckey = self.didText.text()
+        http = self.downloadText2.text()
+        O1 = self.downloadMuxOutput.isChecked()
+        O2 = self.downloadrenameOutput.isChecked()
+        if O1:
+            O = 'MUX'
+        elif O2:
+            O = 'Rename'
+        else:
+            O = False
+        File = self.downloadparseName.text()
+        FileName = str(File)
+        update = 0
+        for x in self.downloads:
+            url = x['url']
+            i = self.downloads.index(x)
+            if ckey == x['cid']:
+                update = update + 1
+                if http != x['url']:
+                    index = self.downloadmodel.index(i, 0)
+                    self.downloadmodel.setData(index, url)
+                    self.message(f'URL was updated for {url}')
+                    update = update + 1
+                if O != x['option']:
+                    index = self.downloadmodel.index(i, 1)
+                    self.downloadmodel.setData(index, O)
+                    self.message(f'After processing option was updated for {url}')
+                    update = update + 1
+                if FileName != x['filename']:
+                    index = self.downloadmodel.index(i, 2)
+                    self.downloadmodel.setData(index, FileName)
+                    self.message(f'File name was updated for {url}')
+                    update = update + 1
+        if update == 0:
+            self.addcapture()
+        elif update == 1:
+            self.message(f"Attempted to update parameters for {url}, but there was nothing changed.")
+        self.downloademodel.layoutChanged.emit()
+        self.clearFields("d")
+
     def deletecapture(self):
         indexes = self.captureQueueView.selectionModel().selectedRows()
         for index in sorted(indexes):
@@ -1311,6 +1528,7 @@ class MainWindow(QMainWindow):
         self.capturemodel.layoutChanged.emit()
         # Clear the selection (as it is no longer valid).
         self.captureQueueView.clearSelection()
+
     def add2DownloadQueue(self, u):
         with open("capture_temp.json", "r") as f:
             captures = json.load(f)
@@ -1324,6 +1542,7 @@ class MainWindow(QMainWindow):
             f = "None"
         self.downloadmodel.appendRow(k, u, o, f)
         self.refreshQueue("d")
+
     def deletedownload(self):
         indexes = self.downloadQueueView.selectionModel().selectedRows()
         for index in sorted(indexes):
@@ -1332,6 +1551,7 @@ class MainWindow(QMainWindow):
         self.downloadmodel.layoutChanged.emit()
         # Clear the selection (as it is no longer valid).
         self.downloadQueueView.clearSelection()
+
     def loadCaptures(self):
         try:
             with open("captures.json", "r") as f:
@@ -1339,6 +1559,7 @@ class MainWindow(QMainWindow):
         except Exception:
             self.captures = []
             pass
+
     def loadDownloads(self):
         try:
             with open("downloads.json", "r") as f:
@@ -1346,21 +1567,26 @@ class MainWindow(QMainWindow):
         except Exception:
             self.downloads = []
             pass
+
     def refresh_downloads(d):
         self = MainWindow()
         self.downloadmodel.layoutAboutToBeChanged.emit()
         self.downloads = d
         self.downloadmodel.layoutChanged.emit()
+
     def progress_fn(self, n):
         print("%d%% done" % n)
 
         return "Done."
+
     def print_output(self, s):
         print(s)
+
     def thread_complete(self):
         self.cancelButton.setVisible(False)
         self.StartButton.setVisible(True)
         print("THREAD COMPLETE!")
+
     def initQueueDownload(self):
         self.threadpool = QThreadPool()
         self.message("Multithreading with maximum %d threads" % self.threadpool.maxThreadCount())
@@ -1370,6 +1596,9 @@ class MainWindow(QMainWindow):
         worker.signals.progress.connect(self.progress_fn)
         # Execute
         self.threadpool.start(worker)
+        self.cancelButton.setVisible(True)
+        self.StartButton.setVisible(False)
+
     def startDownloadFromQueue(self):
         with open("downloads.json", "r") as f:
             self.downloads = json.load(f)
@@ -1385,15 +1614,13 @@ class MainWindow(QMainWindow):
                     rename = dict(rename="False", url=u, fn="none", filename="None")
                 if rename:
                     with open("download_temp.json", "w") as f:
-                        renamef = json.dump(rename, f)
+                        json.dump(rename, f)
                 self.message("Starting Download of: " + u)
-                self.cancelButton.setVisible(True)
-                self.StartButton.setVisible(False)
                 self.start_download()
                 time.sleep(2)
                 self.p.waitForFinished()
-
             self.message("Download Queue Complete")
+
     def startCapturesFromQueue(self):
         with open("captures.json", "r") as f:
             self.captures = json.load(f)
@@ -1406,31 +1633,33 @@ class MainWindow(QMainWindow):
                 o = x['option']
                 f = x['filename']
                 if o == 'Rename':
-                    rename = dict(rename="True", auto=a, q=q, o=o, fn=f, filename="None")
+                    rename = dict(url=u, rename="True", auto=a, q=q, o=o, fn=f, filename="None")
                 else:
-                    rename = dict(rename="False", auto=a, q=q, o=o, fn="none", filename="None")
+                    rename = dict(url=u, rename="False", auto=a, q=q, o=o, fn="none", filename="None")
                 if rename:
                     with open("capture_temp.json", "w") as f:
-                        renamef = json.dump(rename, f)
+                        json.dump(rename, f)
+                code = requests.get(u)
+                print(code.status_code)
                 self.message("Starting Capture of: " + u)
                 self.start_capture()
                 time.sleep(2)
                 self.p.waitForFinished()
+
             self.message("Capture Queue Complete ... Starting Downloads in Queue.")
-        else:
-            self.startDownloadFromQueue()
+        #else:
+            #self.startDownloadFromQueue()
+
     def loadPreferences(self):
         dlg = PreferencesDialog()
         dlg.exec_()
+
     def buildflags(self):
         flags = "--skip-prompts"
         prefs_exists = exists('preferences.json')
         if prefs_exists:
             with open("preferences.json", "r") as f:
                 prefs = json.load(f)
-            #with open("agents.json", "r") as f:
-            #    agents = json.load(f)
-            #    agent = agents['agents']
             da = prefs['da']
             if da == 'True':
                 df = prefs['df']
@@ -1508,6 +1737,8 @@ class MainWindow(QMainWindow):
                 flags = flags + " --no-decrypt"
             self.message("Launching with flags: " + flags)
             return flags
+
+
 class QualitySelectDialog(QDialog):
     def __init__(self):
         super().__init__()
@@ -1534,7 +1765,7 @@ class QualitySelectDialog(QDialog):
         self.layout.addWidget(self.captureView)
         self.captureView.setModel(self.qselectmodel)
         self.captureView.setColumnWidth(0, 450)
-        self.captureView.setColumnWidth(3, 150)
+        self.captureView.setColumnWidth(3, 175)
         self.captureView.resizeColumnsToContents()
         selectButton = QPushButton("Select")
         self.layout.addWidget(selectButton)
@@ -1595,6 +1826,8 @@ class QualitySelectDialog(QDialog):
         #MainWindow.start_download_from_select(u)
         self.add2Queue(u)
         #self.close()
+
+
 class PreferencesDialog(QDialog):
     def __init__(self):
         super().__init__()
@@ -1635,7 +1868,7 @@ class PreferencesDialog(QDialog):
         self.glayout2.addWidget(self.retriesText, 0, 1)
         self.threadsActive = QCheckBox(
             "Adjust the maximum number of threads:")
-        self.glayout2.addWidget(self.threadsActive,0 , 2)
+        self.glayout2.addWidget(self.threadsActive, 0, 2)
         self.threadsText = QLineEdit()
         self.glayout2.addWidget(self.threadsText, 0, 3)
         self.glayout2.setAlignment(Qt.AlignTop)
@@ -1710,14 +1943,17 @@ class PreferencesDialog(QDialog):
         self.headerlayout.addWidget(headerbtnbox, 1, 1)
         headerbtnbox.setLayout(self.clayout2)
         self.addHeaderButton = QPushButton("Add")
-        self.addHeaderButton.clicked.connect(lambda: self.addHeader())
         self.clayout2.addWidget(self.addHeaderButton)
+        self.addHeaderButton.clicked.connect(lambda: self.addHeader())
+        self.addHeaderButton.setFixedSize(175, 25)
         self.removeHeaderButton = QPushButton("Remove")
         self.clayout2.addWidget(self.removeHeaderButton)
         self.removeHeaderButton.clicked.connect(lambda: self.removeHeader())
+        self.removeHeaderButton.setFixedSize(175, 25)
         self.clearHeaderButton = QPushButton("Clear")
         self.clayout2.addWidget(self.clearHeaderButton)
         self.clearHeaderButton.clicked.connect(lambda: self.clearHeader())
+        self.clearHeaderButton.setFixedSize(175, 25)
         self.clayout2.setAlignment(Qt.AlignTop)
         domainbox = QWidget()
         self.clayout1.addWidget(domainbox, 2, 2)
@@ -1736,14 +1972,17 @@ class PreferencesDialog(QDialog):
         self.domainlayout.addWidget(domainbtnbox, 1, 1)
         domainbtnbox.setLayout(self.clayout3)
         self.addDomainButton = QPushButton("Add")
-        self.addDomainButton.clicked.connect(lambda: self.addDomain())
         self.clayout3.addWidget(self.addDomainButton)
+        self.addDomainButton.clicked.connect(lambda: self.addDomain())
+        self.addDomainButton.setFixedSize(175, 25)
         self.removeDomainButton = QPushButton("Remove")
         self.clayout3.addWidget(self.removeDomainButton)
         self.removeDomainButton.clicked.connect(lambda: self.removeDomain())
+        self.removeDomainButton.setFixedSize(175, 25)
         self.clearDomainButton = QPushButton("Clear")
         self.clayout3.addWidget(self.clearDomainButton)
         self.clearDomainButton.clicked.connect(lambda: self.clearDomain())
+        self.clearDomainButton.setFixedSize(175, 25)
         self.clayout3.setAlignment(Qt.AlignTop)
         self.agentActive = QCheckBox(
             "Use custom agent header for requests:")
@@ -1794,14 +2033,17 @@ class PreferencesDialog(QDialog):
         self.ckeylayout.addWidget(ckeybtnbox, 1, 1)
         ckeybtnbox.setLayout(self.dlayout2)
         self.addCkeyButton = QPushButton("Add")
-        self.addCkeyButton.clicked.connect(lambda: self.addCkey())
         self.dlayout2.addWidget(self.addCkeyButton)
-        self.removeDomainButton = QPushButton("Remove")
-        self.dlayout2.addWidget(self.removeDomainButton)
-        self.removeDomainButton.clicked.connect(lambda: self.removeCkey())
-        self.clearDomainButton = QPushButton("Clear")
-        self.dlayout2.addWidget(self.clearDomainButton)
-        self.clearDomainButton.clicked.connect(lambda: self.clearCkey())
+        self.addCkeyButton.clicked.connect(lambda: self.addCkey())
+        self.addCkeyButton.setFixedSize(175, 25)
+        self.removeCkeyButton = QPushButton("Remove")
+        self.dlayout2.addWidget(self.removeCkeyButton)
+        self.removeCkeyButton.clicked.connect(lambda: self.removeCkey())
+        self.removeCkeyButton.setFixedSize(175, 25)
+        self.clearCkeyButton = QPushButton("Clear")
+        self.dlayout2.addWidget(self.clearCkeyButton)
+        self.clearCkeyButton.clicked.connect(lambda: self.clearCkey())
+        self.clearCkeyButton.setFixedSize(175, 25)
 
         self.dlayout2.setAlignment(Qt.AlignTop)
         self.dlayout.setAlignment(Qt.AlignTop)
@@ -2083,6 +2325,8 @@ class PreferencesDialog(QDialog):
 
         with open("preferences.json", "w") as f:
             linkf = json.dump(data, f)
+
+
 class Header(QWidget):
     """Header class for collapsible group"""
 
@@ -2135,6 +2379,8 @@ class Header(QWidget):
     def collapse(self):
         self.content.setVisible(False)
         self.icon.setPixmap(self.collapse_ico)
+
+
 class Container(QWidget):
     """Class for creating a collapsible group similar to how it is implement in Maya
 
@@ -2178,7 +2424,9 @@ class Container(QWidget):
         """
         return self._content_widget
 
+
 app = QApplication(sys.argv)
+qdarktheme.setup_theme()
 
 window = MainWindow()
 window.show()
